@@ -1,0 +1,89 @@
+######################################
+# OS files
+######################################
+.DS_Store
+Thumbs.db
+
+######################################
+# IDE / Editor
+######################################
+.vscode/
+.idea/
+*.swp
+*.swo
+
+######################################
+# Environment variables
+######################################
+.env
+.env.*
+
+######################################
+# Python
+######################################
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+*.egg-info/
+.eggs/
+
+.venv/
+venv/
+ENV/
+env/
+
+pip-log.txt
+pip-delete-this-directory.txt
+
+######################################
+# Python build / test
+######################################
+build/
+dist/
+.pytest_cache/
+.coverage
+coverage.xml
+
+######################################
+# FastAPI / logs
+######################################
+*.log
+
+######################################
+# Node / Web Admin
+######################################
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+######################################
+# Flutter
+######################################
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+
+######################################
+# Flutter IDE files
+######################################
+**/android/local.properties
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+
+######################################
+# Mac Flutter artifacts
+######################################
+**/macos/Flutter/ephemeral/
+
+######################################
+# Coverage
+######################################
+coverage/
