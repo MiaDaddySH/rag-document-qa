@@ -1,8 +1,9 @@
 from pathlib import Path
 import shutil
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 
+from app.chunker import chunk_text
 from app.config import settings
 from app.document_loader import extract_text_from_pdf
 
@@ -65,3 +66,42 @@ def extract_text(filename: str):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to extract text: {str(e)}")
+
+
+@app.get("/chunk/{filename}")
+def chunk_document(
+    filename: str,
+    chunk_size: int = Query(500, gt=0),
+    chunk_overlap: int = Query(100, ge=0),
+):
+    file_path = UPLOAD_DIR / filename
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    if chunk_overlap >= chunk_size:
+        raise HTTPException(
+            status_code=400,
+            detail="chunk_overlap must be smaller than chunk_size.",
+        )
+
+    try:
+        extraction_result = extract_text_from_pdf(file_path)
+        text = extraction_result["text"]
+
+        chunks = chunk_text(
+            text=text,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+
+        return {
+            "filename": filename,
+            "page_count": extraction_result["page_count"],
+            "chunk_size": chunk_size,
+            "chunk_overlap": chunk_overlap,
+            "chunk_count": len(chunks),
+            "chunks": chunks,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to chunk document: {str(e)}")
