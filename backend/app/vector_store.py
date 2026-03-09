@@ -66,3 +66,33 @@ def upsert_chunks(chunks_with_embeddings: list[dict]) -> int:
     )
 
     return len(points)
+
+# 给定一个查询向量，返回最相似的 chunks。
+def search_similar_chunks(query_vector: list[float], limit: int = 3) -> list[dict]:
+    client = get_qdrant_client()
+
+    result = client.query_points(
+        collection_name=settings.qdrant_collection_name,
+        query=query_vector,
+        limit=limit,
+        with_payload=True,
+    )
+
+    points = result.points if hasattr(result, "points") else []
+
+    matches = []
+    for point in points:
+        payload = point.payload or {}
+        matches.append(
+            {
+                "score": point.score,
+                "filename": payload.get("filename"),
+                "chunk_index": payload.get("chunk_index"),
+                "text": payload.get("text"),
+                "start_char": payload.get("start_char"),
+                "end_char": payload.get("end_char"),
+                "page_count": payload.get("page_count"),
+            }
+        )
+
+    return matches

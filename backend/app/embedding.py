@@ -1,7 +1,7 @@
 from app.config import settings
 from app.llm_client import get_llm_client
 
-
+# 负责调用 Azure OpenAI 的 embedding API，把文本转换成向量。
 def embed_text(text: str) -> list[float]:
     if not text.strip():
         raise ValueError("Input text for embedding is empty.")

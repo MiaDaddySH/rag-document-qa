@@ -2,7 +2,7 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
-
+# 负责从 PDF 文件中提取文本内容，并返回结构化的结果，包括每页的文本和整个文档的文本。
 def extract_text_from_pdf(file_path: Path) -> dict:
     if not file_path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")

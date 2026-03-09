@@ -1,6 +1,6 @@
 from typing import List, Dict
 
-
+# 负责把长文本切分成多个 chunk，每个 chunk 包含文本内容和位置信息。
 def chunk_text(
     text: str,
     chunk_size: int = 500,
