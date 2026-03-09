@@ -7,6 +7,7 @@ from app.chunker import chunk_text
 from app.config import settings
 from app.document_loader import extract_text_from_pdf
 from app.embedding import embed_text
+from app.vector_store import upsert_chunks
 
 app = FastAPI(
     title="RAG MVP Backend",
@@ -157,3 +158,58 @@ def embed_document(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate embeddings: {str(e)}")
+    
+
+@app.post("/index/{filename}")
+def index_document(
+    filename: str,
+    chunk_size: int = Query(500, gt=0),
+    chunk_overlap: int = Query(100, ge=0),
+):
+    file_path = UPLOAD_DIR / filename
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    if chunk_overlap >= chunk_size:
+        raise HTTPException(
+            status_code=400,
+            detail="chunk_overlap must be smaller than chunk_size.",
+        )
+
+    try:
+        extraction_result = extract_text_from_pdf(file_path)
+        text = extraction_result["text"]
+
+        chunks = chunk_text(
+            text=text,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+
+        chunks_with_embeddings = []
+        for chunk in chunks:
+            embedding = embed_text(chunk["content"])
+            chunks_with_embeddings.append(
+                {
+                    "filename": filename,
+                    "page_count": extraction_result["page_count"],
+                    "chunk_index": chunk["chunk_index"],
+                    "content": chunk["content"],
+                    "start_char": chunk["start_char"],
+                    "end_char": chunk["end_char"],
+                    "embedding": embedding,
+                }
+            )
+
+        inserted_count = upsert_chunks(chunks_with_embeddings)
+
+        return {
+            "message": "Document indexed successfully",
+            "filename": filename,
+            "chunk_count": len(chunks),
+            "inserted_count": inserted_count,
+            "collection_name": settings.qdrant_collection_name,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to index document: {str(e)}")
