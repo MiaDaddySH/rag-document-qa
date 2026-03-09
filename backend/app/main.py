@@ -2,6 +2,7 @@ from pathlib import Path
 import shutil
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.chunker import chunk_text
 from app.config import settings
@@ -16,6 +17,16 @@ app = FastAPI(
     title="RAG MVP Backend",
     version="0.1.0",
     description="Backend service for PDF upload, retrieval, and question answering."
+)
+
+# 添加 CORS 中间件，允许所有来源的请求（在生产环境中应更严格地配置）。
+# 这使得前端应用可以从不同的域名访问这个后端 API。
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 UPLOAD_DIR = Path("uploads")
@@ -223,6 +234,7 @@ def index_document(
 class AskRequest(BaseModel):
     question: str
     top_k: int = 3
+    filename: str | None = None
 
 # 定义一个POST 端点，接受用户问题，执行 RAG 流程，并返回答案和相关信息。
 @app.post("/ask")
@@ -231,6 +243,7 @@ def ask_question(request: AskRequest):
         result = answer_question(
             question=request.question,
             top_k=request.top_k,
+            filename=request.filename,
         )
         return result
     except Exception as e:

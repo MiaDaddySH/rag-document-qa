@@ -1,7 +1,14 @@
 from uuid import uuid4
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    PointStruct,
+    VectorParams,
+)
 
 from app.config import settings
 
@@ -67,15 +74,31 @@ def upsert_chunks(chunks_with_embeddings: list[dict]) -> int:
 
     return len(points)
 
-# 给定一个查询向量，返回最相似的 chunks。
-def search_similar_chunks(query_vector: list[float], limit: int = 3) -> list[dict]:
+# 根据查询向量，在 Qdrant 中检索相似的 chunks，并返回它们的文本内容和相关信息。可以选择只检索特定文件的 chunks。
+def search_similar_chunks(
+    query_vector: list[float],
+    limit: int = 3,
+    filename: str | None = None,
+) -> list[dict]:
     client = get_qdrant_client()
+
+    query_filter = None
+    if filename:
+        query_filter = Filter(
+            must=[
+                FieldCondition(
+                    key="filename",
+                    match=MatchValue(value=filename),
+                )
+            ]
+        )
 
     result = client.query_points(
         collection_name=settings.qdrant_collection_name,
         query=query_vector,
         limit=limit,
         with_payload=True,
+        query_filter=query_filter,
     )
 
     points = result.points if hasattr(result, "points") else []
