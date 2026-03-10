@@ -40,6 +40,22 @@ def ensure_collection(vector_size: int) -> None:
             ),
         )
 
+# 删除 Qdrant 中所有 filename 为指定值的 chunks。
+def delete_chunks_by_filename(filename: str) -> None:
+    client = get_qdrant_client()
+
+    client.delete(
+        collection_name=settings.qdrant_collection_name,
+        points_selector=Filter(
+            must=[
+                FieldCondition(
+                    key="filename",
+                    match=MatchValue(value=filename),
+                )
+            ]
+        ),
+    )
+
 # 把 chunk + embedding + metadata 一起写入 Qdrant。
 def upsert_chunks(chunks_with_embeddings: list[dict]) -> int:
     if not chunks_with_embeddings:

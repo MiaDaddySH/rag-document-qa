@@ -11,6 +11,7 @@ from app.embedding import embed_text
 from app.vector_store import upsert_chunks
 from pydantic import BaseModel
 from app.rag_pipeline import answer_question
+from app.vector_store import delete_chunks_by_filename, upsert_chunks
 
 # 主应用实例
 app = FastAPI(
@@ -175,7 +176,7 @@ def embed_document(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate embeddings: {str(e)}")
     
-# 定义一个 POST 端点，接受文件名、chunk_size 和 chunk_overlap 参数，执行切分、嵌入和向量存储，并返回处理结果。
+# 定义一个 POST 端点，接受文件名、chunk_size 和 chunk_overlap 参数，执行切分、嵌入和写入向量数据库，并返回操作结果。
 @app.post("/index/{filename}")
 def index_document(
     filename: str,
@@ -218,6 +219,7 @@ def index_document(
                 }
             )
 
+        delete_chunks_by_filename(filename)
         inserted_count = upsert_chunks(chunks_with_embeddings)
 
         return {

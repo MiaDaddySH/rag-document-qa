@@ -15,6 +15,7 @@ const topKInput = document.getElementById("topKInput");
 const askBtn = document.getElementById("askBtn");
 const askStatus = document.getElementById("askStatus");
 const answerOutput = document.getElementById("answerOutput");
+const sourcesOutput = document.getElementById("sourcesOutput");
 const chunksOutput = document.getElementById("chunksOutput");
 
 function setText(element, text) {
@@ -104,6 +105,7 @@ askBtn.addEventListener("click", async () => {
 
   setText(askStatus, "Asking question...");
   setText(answerOutput, "");
+  setText(sourcesOutput, "");
   setText(chunksOutput, "");
 
   try {
@@ -127,6 +129,7 @@ askBtn.addEventListener("click", async () => {
 
     setText(askStatus, "Question answered successfully.");
     setText(answerOutput, data.answer || "No answer returned.");
+    setText(sourcesOutput, JSON.stringify(data.sources, null, 2));
     setText(chunksOutput, JSON.stringify(data.retrieved_chunks, null, 2));
   } catch (error) {
     setText(askStatus, `Ask failed: ${error.message}`);
