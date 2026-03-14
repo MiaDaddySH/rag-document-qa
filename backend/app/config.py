@@ -53,6 +53,8 @@ class Settings(BaseSettings):
         ge=0.1,
         le=60.0,
     )
+    log_success_sample_rate: float = Field(default=0.2, alias="LOG_SUCCESS_SAMPLE_RATE", ge=0.0, le=1.0)
+    log_slow_request_ms: int = Field(default=1200, alias="LOG_SLOW_REQUEST_MS", ge=1, le=60000)
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -144,6 +146,8 @@ def get_settings_health_report() -> dict:
             "qdrant_timeout_seconds": settings.qdrant_timeout_seconds,
             "qdrant_max_retries": settings.qdrant_max_retries,
             "dependency_probe_timeout_seconds": settings.dependency_probe_timeout_seconds,
+            "log_success_sample_rate": settings.log_success_sample_rate,
+            "log_slow_request_ms": settings.log_slow_request_ms,
         },
         "targets": {
             "azure_openai_endpoint_host": azure_host,

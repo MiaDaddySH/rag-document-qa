@@ -1,6 +1,8 @@
 import logging
 import platform
 from pathlib import Path
+import random
+import re
 import shutil
 import time
 from uuid import uuid4
@@ -20,6 +22,12 @@ from app.vector_store import delete_chunks_by_filename, probe_qdrant_dependency,
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rag_mvp_backend")
+SENSITIVE_PATTERNS = [
+    re.compile(r"(?i)(api[_-]?key\s*[:=]\s*)([^\s,;]+)"),
+    re.compile(r"(?i)(authorization\s*[:=]\s*)([^\s,;]+)"),
+    re.compile(r"(?i)(token\s*[:=]\s*)([^\s,;]+)"),
+    re.compile(r"(?i)(bearer\s+)([a-z0-9\-._~+/]+=*)"),
+]
 
 app = FastAPI(
     title="RAG MVP Backend",
@@ -76,6 +84,21 @@ def status_code_to_error_code(status_code: int) -> str:
     return mapping.get(status_code, "request_error")
 
 
+def redact_text(value: str) -> str:
+    text = value
+    for pattern in SENSITIVE_PATTERNS:
+        text = pattern.sub(lambda match: f"{match.group(1)}***", text)
+    return text
+
+
+def should_log_success(status_code: int, elapsed_ms: float) -> bool:
+    if status_code >= 400:
+        return True
+    if elapsed_ms >= settings.log_slow_request_ms:
+        return True
+    return random.random() < settings.log_success_sample_rate
+
+
 @app.middleware("http")
 async def observability_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id") or str(uuid4())
@@ -83,27 +106,30 @@ async def observability_middleware(request: Request, call_next):
     start = time.perf_counter()
     try:
         response = await call_next(request)
-    except Exception:
+    except Exception as exc:
         elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
-        logger.exception(
-            "request_failed request_id=%s method=%s path=%s duration_ms=%s",
+        logger.error(
+            "request_failed request_id=%s method=%s path=%s duration_ms=%s error=%s",
             request_id,
             request.method,
             request.url.path,
             elapsed_ms,
+            redact_text(str(exc)),
         )
         raise
     elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
     response.headers["X-Request-Id"] = request_id
     response.headers["X-Process-Time-Ms"] = str(elapsed_ms)
-    logger.info(
-        "request_ok request_id=%s method=%s path=%s status=%s duration_ms=%s",
-        request_id,
-        request.method,
-        request.url.path,
-        response.status_code,
-        elapsed_ms,
-    )
+    if should_log_success(response.status_code, elapsed_ms):
+        logger.info(
+            "request_ok request_id=%s method=%s path=%s status=%s duration_ms=%s sampled=%s",
+            request_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+            response.status_code < 400 and elapsed_ms < settings.log_slow_request_ms,
+        )
     return response
 
 
@@ -126,7 +152,12 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     request_id = getattr(request.state, "request_id", None)
-    logger.exception("unhandled_exception request_id=%s path=%s", request_id, request.url.path)
+    logger.error(
+        "unhandled_exception request_id=%s path=%s error=%s",
+        request_id,
+        request.url.path,
+        redact_text(str(exc)),
+    )
     return JSONResponse(
         status_code=500,
         content=error_payload("internal_error", "Internal server error.", request_id),
@@ -183,8 +214,8 @@ def health_check(check_dependencies: bool = Query(False)):
         dependency_report = {
             "checked": True,
             "ready": azure_ready and qdrant_ready,
-            "azure_openai": {"ready": azure_ready, "detail": azure_detail},
-            "qdrant": {"ready": qdrant_ready, "detail": qdrant_detail},
+            "azure_openai": {"ready": azure_ready, "detail": redact_text(azure_detail)},
+            "qdrant": {"ready": qdrant_ready, "detail": redact_text(qdrant_detail)},
         }
     return {
         "status": "ok",
