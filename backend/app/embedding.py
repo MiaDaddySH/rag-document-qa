@@ -1,10 +1,11 @@
 from app.config import settings
 from app.llm_client import get_llm_client
 
-# 负责调用 Azure OpenAI 的 embedding API，把文本转换成向量。
-def embed_text(text: str) -> list[float]:
-    if not text.strip():
-        raise ValueError("Input text for embedding is empty.")
+# 批量调用 Azure OpenAI 的 embedding API，减少网络开销。
+def embed_texts(texts: list[str]) -> list[list[float]]:
+    normalized_texts = [text.strip() for text in texts if text and text.strip()]
+    if not normalized_texts:
+        raise ValueError("Input texts for embedding are empty.")
 
     if not settings.azure_openai_embedding_deployment:
         raise ValueError("AZURE_OPENAI_EMBEDDING_DEPLOYMENT is not configured.")
@@ -13,7 +14,11 @@ def embed_text(text: str) -> list[float]:
 
     response = client.embeddings.create(
         model=settings.azure_openai_embedding_deployment,
-        input=text,
+        input=normalized_texts,
     )
 
-    return response.data[0].embedding
+    return [item.embedding for item in response.data]
+
+# 兼容单条输入的便捷方法。
+def embed_text(text: str) -> list[float]:
+    return embed_texts([text])[0]

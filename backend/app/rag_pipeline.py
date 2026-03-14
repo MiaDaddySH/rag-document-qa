@@ -6,19 +6,43 @@ from app.vector_store import search_similar_chunks
 # 负责 RAG（Retrieval-Augmented Generation）的核心流程：
 # 根据用户的问题，先把问题转换成向量，在向量数据库中检索相关的文本 chunks，
 # 然后把这些 chunks 作为上下文，调用 LLM 生成最终的答案。
-def build_context(retrieved_chunks: list[dict]) -> str:
+def build_context(retrieved_chunks: list[dict], max_chars: int) -> str:
     context_parts = []
+    total_chars = 0
 
     for i, chunk in enumerate(retrieved_chunks, start=1):
         text = chunk.get("text", "") or ""
         filename = chunk.get("filename", "unknown")
         chunk_index = chunk.get("chunk_index", -1)
 
-        context_parts.append(
-            f"[Source {i}] filename={filename}, chunk_index={chunk_index}\n{text}"
-        )
+        part = f"[Source {i}] filename={filename}, chunk_index={chunk_index}\n{text}"
+        if max_chars > 0 and total_chars + len(part) > max_chars:
+            remaining = max_chars - total_chars
+            if remaining <= 0:
+                break
+            part = part[:remaining]
+        context_parts.append(part)
+        total_chars += len(part)
+        if max_chars > 0 and total_chars >= max_chars:
+            break
 
     return "\n\n".join(context_parts)
+
+# 先按相似度阈值过滤，再保留顺序，保证上下文质量。
+def filter_retrieved_chunks(retrieved_chunks: list[dict]) -> list[dict]:
+    min_score = settings.rag_min_score
+    if min_score <= 0:
+        return retrieved_chunks
+
+    filtered = []
+    for chunk in retrieved_chunks:
+        score = chunk.get("score")
+        if score is None:
+            continue
+        if score >= min_score:
+            filtered.append(chunk)
+
+    return filtered
 
 # 构建最终的答案时，除了返回生成的文本，还会返回每个被检索到的 chunk 的来源信息，方便前端展示。
 def build_sources(retrieved_chunks: list[dict]) -> list[dict]:
@@ -82,14 +106,23 @@ def answer_question(
         limit=top_k,
         filename=filename,
     )
-    context = build_context(retrieved_chunks)
+    filtered_chunks = filter_retrieved_chunks(retrieved_chunks)
+    context = build_context(filtered_chunks, settings.rag_context_max_chars)
+    if not context.strip():
+        return {
+            "question": question,
+            "filename": filename,
+            "answer": "没有找到相关内容，我不知道。",
+            "sources": [],
+            "retrieved_chunks": [],
+        }
     answer = generate_answer(question=question, context=context)
-    sources = build_sources(retrieved_chunks)
+    sources = build_sources(filtered_chunks)
 
     return {
         "question": question,
         "filename": filename,
         "answer": answer,
         "sources": sources,
-        "retrieved_chunks": retrieved_chunks,
+        "retrieved_chunks": filtered_chunks,
     }
