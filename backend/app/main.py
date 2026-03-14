@@ -1,8 +1,13 @@
+import logging
+import platform
 from pathlib import Path
 import shutil
+import time
+from uuid import uuid4
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.chunker import chunk_text
 from app.config import get_settings_health_report, settings
@@ -13,7 +18,9 @@ from pydantic import BaseModel
 from app.rag_pipeline import answer_question
 from app.vector_store import delete_chunks_by_filename, probe_qdrant_dependency, upsert_chunks
 
-# 主应用实例
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("rag_mvp_backend")
+
 app = FastAPI(
     title="RAG MVP Backend",
     version="0.1.0",
@@ -33,27 +40,117 @@ app.add_middleware(
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# 统一处理上传文件名，避免路径穿越。
+
+def error_payload(code: str, message: str, request_id: str | None) -> dict:
+    return {
+        "success": False,
+        "error": {
+            "code": code,
+            "message": message,
+            "request_id": request_id,
+        },
+    }
+
+
+def raise_api_error(status_code: int, code: str, message: str) -> None:
+    raise HTTPException(
+        status_code=status_code,
+        detail={
+            "code": code,
+            "message": message,
+        },
+    )
+
+
+def status_code_to_error_code(status_code: int) -> str:
+    mapping = {
+        400: "bad_request",
+        401: "unauthorized",
+        403: "forbidden",
+        404: "not_found",
+        409: "conflict",
+        413: "payload_too_large",
+        422: "validation_error",
+        429: "rate_limited",
+    }
+    return mapping.get(status_code, "request_error")
+
+
+@app.middleware("http")
+async def observability_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-Id") or str(uuid4())
+    request.state.request_id = request_id
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+        logger.exception(
+            "request_failed request_id=%s method=%s path=%s duration_ms=%s",
+            request_id,
+            request.method,
+            request.url.path,
+            elapsed_ms,
+        )
+        raise
+    elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+    response.headers["X-Request-Id"] = request_id
+    response.headers["X-Process-Time-Ms"] = str(elapsed_ms)
+    logger.info(
+        "request_ok request_id=%s method=%s path=%s status=%s duration_ms=%s",
+        request_id,
+        request.method,
+        request.url.path,
+        response.status_code,
+        elapsed_ms,
+    )
+    return response
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    request_id = getattr(request.state, "request_id", None)
+    detail = exc.detail
+    if isinstance(detail, dict):
+        code = str(detail.get("code") or status_code_to_error_code(exc.status_code))
+        message = str(detail.get("message") or "Request failed.")
+    else:
+        code = status_code_to_error_code(exc.status_code)
+        message = str(detail) if detail else "Request failed."
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=error_payload(code, message, request_id),
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = getattr(request.state, "request_id", None)
+    logger.exception("unhandled_exception request_id=%s path=%s", request_id, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content=error_payload("internal_error", "Internal server error.", request_id),
+    )
+
+
 def normalize_filename(filename: str) -> str:
     safe_name = Path(filename).name.strip()
     if not safe_name:
-        raise HTTPException(status_code=400, detail="Filename is invalid.")
+        raise_api_error(400, "invalid_filename", "Filename is invalid.")
     return safe_name
 
-# 校验上传大小，避免过大文件占用资源。
 def ensure_upload_size(file: UploadFile) -> None:
     try:
         file.file.seek(0, 2)
         size = file.file.tell()
         file.file.seek(0)
     except Exception:
-        raise HTTPException(status_code=400, detail="Failed to read file size.")
+        raise_api_error(400, "file_size_read_failed", "Failed to read file size.")
 
     max_bytes = settings.upload_max_mb * 1024 * 1024
     if size > max_bytes:
-        raise HTTPException(status_code=400, detail="File is too large.")
+        raise_api_error(413, "file_too_large", "File is too large.")
 
-# 批量生成 embeddings，降低调用开销。
 def batch_embed_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
@@ -63,7 +160,6 @@ def batch_embed_texts(texts: list[str]) -> list[list[float]]:
         embeddings.extend(embed_texts(texts[start : start + batch_size]))
     return embeddings
 
-# 根路径，简单的欢迎信息。
 @app.get("/")
 def read_root():
     return {
@@ -72,7 +168,6 @@ def read_root():
         "version": "0.1.0",
     }
 
-# 健康检查端点，返回服务状态和 Azure OpenAI 配置状态。
 @app.get("/health")
 def health_check(check_dependencies: bool = Query(False)):
     config_report = get_settings_health_report()
@@ -94,23 +189,27 @@ def health_check(check_dependencies: bool = Query(False)):
     return {
         "status": "ok",
         "service_ready": config_report["config_validated"] and dependency_report["ready"],
+        "runtime": {
+            "service": "backend",
+            "version": app.version,
+            "python_version": platform.python_version(),
+        },
         "config": config_report,
         "dependencies": dependency_report,
     }
 
-# 文件上传端点，接受 PDF 文件并保存到服务器。
 @app.post("/upload")
 def upload_pdf(file: UploadFile = File(...)):
     if file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
+        raise_api_error(400, "invalid_file_type", "Only PDF files are allowed.")
 
     if not file.filename:
-        raise HTTPException(status_code=400, detail="Filename is missing.")
+        raise_api_error(400, "missing_filename", "Filename is missing.")
 
     ensure_upload_size(file)
     safe_filename = normalize_filename(file.filename)
     if not safe_filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
+        raise_api_error(400, "invalid_file_extension", "Only PDF files are allowed.")
 
     file_path = UPLOAD_DIR / safe_filename
 
@@ -123,23 +222,21 @@ def upload_pdf(file: UploadFile = File(...)):
         "saved_path": str(file_path),
     }
 
-# 定义一个 GET 端点，接受文件名参数，调用 extract_text_from_pdf 函数，并返回提取的文本内容和结构化信息。
 @app.get("/extract-text/{filename}")
 def extract_text(filename: str):
     safe_filename = normalize_filename(filename)
     file_path = UPLOAD_DIR / safe_filename
 
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found.")
+        raise_api_error(404, "file_not_found", "File not found.")
 
     try:
         result = extract_text_from_pdf(file_path)
         return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to extract text: {str(e)}")
+    except Exception:
+        raise_api_error(500, "extract_text_failed", "Failed to extract text.")
 
 
-# 定义一个 GET 端点，接受文件名、chunk_size 和 chunk_overlap 参数，调用 chunk_text 函数，并返回切分后的 chunks。
 @app.get("/chunk/{filename}")
 def chunk_document(
     filename: str,
@@ -150,13 +247,10 @@ def chunk_document(
     file_path = UPLOAD_DIR / safe_filename
 
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found.")
+        raise_api_error(404, "file_not_found", "File not found.")
 
     if chunk_overlap >= chunk_size:
-        raise HTTPException(
-            status_code=400,
-            detail="chunk_overlap must be smaller than chunk_size.",
-        )
+        raise_api_error(400, "invalid_chunk_overlap", "chunk_overlap must be smaller than chunk_size.")
 
     try:
         extraction_result = extract_text_from_pdf(file_path)
@@ -176,11 +270,10 @@ def chunk_document(
             "chunk_count": len(chunks),
             "chunks": chunks,
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to chunk document: {str(e)}")
+    except Exception:
+        raise_api_error(500, "chunk_document_failed", "Failed to chunk document.")
     
 
-# 定义一个 GET 端点，接受文件名、chunk_size 和 chunk_overlap 参数，执行切分和嵌入，并返回嵌入结果。   
 @app.get("/embed/{filename}")
 def embed_document(
     filename: str,
@@ -191,13 +284,10 @@ def embed_document(
     file_path = UPLOAD_DIR / safe_filename
 
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found.")
+        raise_api_error(404, "file_not_found", "File not found.")
 
     if chunk_overlap >= chunk_size:
-        raise HTTPException(
-            status_code=400,
-            detail="chunk_overlap must be smaller than chunk_size.",
-        )
+        raise_api_error(400, "invalid_chunk_overlap", "chunk_overlap must be smaller than chunk_size.")
 
     try:
         extraction_result = extract_text_from_pdf(file_path)
@@ -230,10 +320,9 @@ def embed_document(
             "embedded_chunk_count": len(embedded_chunks),
             "chunks": embedded_chunks,
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate embeddings: {str(e)}")
+    except Exception:
+        raise_api_error(500, "embed_document_failed", "Failed to generate embeddings.")
     
-# 定义一个 POST 端点，接受文件名、chunk_size 和 chunk_overlap 参数，执行切分、嵌入和写入向量数据库，并返回操作结果。
 @app.post("/index/{filename}")
 def index_document(
     filename: str,
@@ -244,13 +333,10 @@ def index_document(
     file_path = UPLOAD_DIR / safe_filename
 
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found.")
+        raise_api_error(404, "file_not_found", "File not found.")
 
     if chunk_overlap >= chunk_size:
-        raise HTTPException(
-            status_code=400,
-            detail="chunk_overlap must be smaller than chunk_size.",
-        )
+        raise_api_error(400, "invalid_chunk_overlap", "chunk_overlap must be smaller than chunk_size.")
 
     try:
         extraction_result = extract_text_from_pdf(file_path)
@@ -288,16 +374,14 @@ def index_document(
             "inserted_count": inserted_count,
             "collection_name": settings.qdrant_collection_name,
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to index document: {str(e)}")
+    except Exception:
+        raise_api_error(500, "index_document_failed", "Failed to index document.")
     
-# 定义请求模型，用于接收用户问题和可选的 top_k 参数。
 class AskRequest(BaseModel):
     question: str
     top_k: int = 3
     filename: str | None = None
 
-# 定义一个POST 端点，接受用户问题，执行 RAG 流程，并返回答案和相关信息。
 @app.post("/ask")
 def ask_question(request: AskRequest):
     try:
@@ -308,5 +392,5 @@ def ask_question(request: AskRequest):
             filename=safe_filename,
         )
         return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to answer question: {str(e)}")
+    except Exception:
+        raise_api_error(500, "ask_question_failed", "Failed to answer question.")
