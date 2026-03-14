@@ -1,5 +1,5 @@
 from app.config import settings
-from app.llm_client import get_llm_client
+from app.llm_client import get_llm_client, run_openai_with_retry
 
 # 批量调用 Azure OpenAI 的 embedding API，减少网络开销。
 def embed_texts(texts: list[str]) -> list[list[float]]:
@@ -12,9 +12,12 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
     client = get_llm_client()
 
-    response = client.embeddings.create(
-        model=settings.azure_openai_embedding_deployment,
-        input=normalized_texts,
+    response = run_openai_with_retry(
+        operation=lambda: client.embeddings.create(
+            model=settings.azure_openai_embedding_deployment,
+            input=normalized_texts,
+        ),
+        operation_name="create_embeddings",
     )
 
     return [item.embedding for item in response.data]

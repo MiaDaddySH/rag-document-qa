@@ -1,6 +1,6 @@
 from app.config import settings
 from app.embedding import embed_text
-from app.llm_client import get_llm_client
+from app.llm_client import get_llm_client, run_openai_with_retry
 from app.vector_store import search_similar_chunks
 
 # 负责 RAG（Retrieval-Augmented Generation）的核心流程：
@@ -69,22 +69,25 @@ def generate_answer(question: str, context: str) -> str:
 
     client = get_llm_client()
 
-    response = client.chat.completions.create(
-        model=settings.azure_openai_deployment,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a helpful assistant for document question answering. "
-                    "Answer only based on the provided context. "
-                    "If the answer is not in the context, say you don't know."
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"Context:\n{context}\n\nQuestion:\n{question}",
-            },
-        ],
+    response = run_openai_with_retry(
+        operation=lambda: client.chat.completions.create(
+            model=settings.azure_openai_deployment,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a helpful assistant for document question answering. "
+                        "Answer only based on the provided context. "
+                        "If the answer is not in the context, say you don't know."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Context:\n{context}\n\nQuestion:\n{question}",
+                },
+            ],
+        ),
+        operation_name="generate_chat_completion",
     )
 
     return response.choices[0].message.content or ""

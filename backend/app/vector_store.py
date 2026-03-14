@@ -1,3 +1,7 @@
+import random
+import time
+from collections.abc import Callable
+from typing import TypeVar
 from uuid import uuid4
 
 from qdrant_client import QdrantClient
@@ -12,15 +16,56 @@ from qdrant_client.models import (
 
 from app.config import settings
 
+T = TypeVar("T")
+
 # 负责创建 Qdrant 客户端。
 def get_qdrant_client() -> QdrantClient:
     if settings.qdrant_api_key:
         return QdrantClient(
             url=settings.qdrant_url,
             api_key=settings.qdrant_api_key,
+            timeout=settings.qdrant_timeout_seconds,
         )
 
-    return QdrantClient(url=settings.qdrant_url)
+    return QdrantClient(
+        url=settings.qdrant_url,
+        timeout=settings.qdrant_timeout_seconds,
+    )
+
+
+def is_retryable_qdrant_error(error: Exception) -> bool:
+    message = str(error).lower()
+    retry_signals = [
+        "timeout",
+        "tempor",
+        "connection",
+        "unavailable",
+        "deadline",
+        "reset",
+        "429",
+        "502",
+        "503",
+        "504",
+    ]
+    return any(signal in message for signal in retry_signals)
+
+
+def run_qdrant_with_retry(operation: Callable[[], T], operation_name: str) -> T:
+    max_retries = settings.qdrant_max_retries
+    base_delay = settings.qdrant_retry_base_delay_seconds
+    last_error: Exception | None = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            return operation()
+        except Exception as error:
+            last_error = error
+            if attempt >= max_retries or not is_retryable_qdrant_error(error):
+                raise RuntimeError(f"{operation_name} failed: {error}") from error
+            sleep_seconds = base_delay * (2 ** attempt) + random.uniform(0, max(base_delay * 0.25, 0.01))
+            time.sleep(sleep_seconds)
+
+    raise RuntimeError(f"{operation_name} failed: {last_error}")
 
 # 确保 collection 存在。
 # 如果不存在，就按给定的向量维度创建。
@@ -28,32 +73,41 @@ def ensure_collection(vector_size: int) -> None:
     client = get_qdrant_client()
     collection_name = settings.qdrant_collection_name
 
-    collections = client.get_collections().collections
+    collections = run_qdrant_with_retry(
+        operation=lambda: client.get_collections().collections,
+        operation_name="get_collections",
+    )
     exists = any(collection.name == collection_name for collection in collections)
 
     if not exists:
-        client.create_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(
-                size=vector_size,
-                distance=Distance.COSINE,
+        run_qdrant_with_retry(
+            operation=lambda: client.create_collection(
+                collection_name=collection_name,
+                vectors_config=VectorParams(
+                    size=vector_size,
+                    distance=Distance.COSINE,
+                ),
             ),
+            operation_name="create_collection",
         )
 
 # 删除 Qdrant 中所有 filename 为指定值的 chunks。
 def delete_chunks_by_filename(filename: str) -> None:
     client = get_qdrant_client()
 
-    client.delete(
-        collection_name=settings.qdrant_collection_name,
-        points_selector=Filter(
-            must=[
-                FieldCondition(
-                    key="filename",
-                    match=MatchValue(value=filename),
-                )
-            ]
+    run_qdrant_with_retry(
+        operation=lambda: client.delete(
+            collection_name=settings.qdrant_collection_name,
+            points_selector=Filter(
+                must=[
+                    FieldCondition(
+                        key="filename",
+                        match=MatchValue(value=filename),
+                    )
+                ]
+            ),
         ),
+        operation_name="delete_points_by_filename",
     )
 
 # 把 chunk + embedding + metadata 一起写入 Qdrant。
@@ -83,9 +137,12 @@ def upsert_chunks(chunks_with_embeddings: list[dict]) -> int:
         )
         points.append(point)
 
-    client.upsert(
-        collection_name=collection_name,
-        points=points,
+    run_qdrant_with_retry(
+        operation=lambda: client.upsert(
+            collection_name=collection_name,
+            points=points,
+        ),
+        operation_name="upsert_points",
     )
 
     return len(points)
@@ -109,12 +166,15 @@ def search_similar_chunks(
             ]
         )
 
-    result = client.query_points(
-        collection_name=settings.qdrant_collection_name,
-        query=query_vector,
-        limit=limit,
-        with_payload=True,
-        query_filter=query_filter,
+    result = run_qdrant_with_retry(
+        operation=lambda: client.query_points(
+            collection_name=settings.qdrant_collection_name,
+            query=query_vector,
+            limit=limit,
+            with_payload=True,
+            query_filter=query_filter,
+        ),
+        operation_name="query_points",
     )
 
     points = result.points if hasattr(result, "points") else []
@@ -135,3 +195,15 @@ def search_similar_chunks(
         )
 
     return matches
+
+
+def probe_qdrant_dependency() -> tuple[bool, str]:
+    client = get_qdrant_client()
+    try:
+        run_qdrant_with_retry(
+            operation=lambda: client.get_collections(),
+            operation_name="probe_qdrant_collections",
+        )
+        return True, "ok"
+    except Exception as error:
+        return False, str(error)

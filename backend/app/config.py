@@ -31,6 +31,28 @@ class Settings(BaseSettings):
     rag_context_max_chars: int = Field(default=6000, alias="RAG_CONTEXT_MAX_CHARS", ge=1)
     embedding_batch_size: int = Field(default=32, alias="EMBEDDING_BATCH_SIZE", ge=1, le=2048)
     upload_max_mb: int = Field(default=20, alias="UPLOAD_MAX_MB", ge=1, le=1024)
+    llm_timeout_seconds: float = Field(default=30.0, alias="LLM_TIMEOUT_SECONDS", ge=0.1, le=300.0)
+    llm_max_retries: int = Field(default=2, alias="LLM_MAX_RETRIES", ge=0, le=10)
+    llm_retry_base_delay_seconds: float = Field(
+        default=1.0,
+        alias="LLM_RETRY_BASE_DELAY_SECONDS",
+        ge=0.0,
+        le=30.0,
+    )
+    qdrant_timeout_seconds: float = Field(default=10.0, alias="QDRANT_TIMEOUT_SECONDS", ge=0.1, le=120.0)
+    qdrant_max_retries: int = Field(default=2, alias="QDRANT_MAX_RETRIES", ge=0, le=10)
+    qdrant_retry_base_delay_seconds: float = Field(
+        default=0.5,
+        alias="QDRANT_RETRY_BASE_DELAY_SECONDS",
+        ge=0.0,
+        le=30.0,
+    )
+    dependency_probe_timeout_seconds: float = Field(
+        default=5.0,
+        alias="DEPENDENCY_PROBE_TIMEOUT_SECONDS",
+        ge=0.1,
+        le=60.0,
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -117,6 +139,11 @@ def get_settings_health_report() -> dict:
             "rag_context_max_chars": settings.rag_context_max_chars,
             "embedding_batch_size": settings.embedding_batch_size,
             "upload_max_mb": settings.upload_max_mb,
+            "llm_timeout_seconds": settings.llm_timeout_seconds,
+            "llm_max_retries": settings.llm_max_retries,
+            "qdrant_timeout_seconds": settings.qdrant_timeout_seconds,
+            "qdrant_max_retries": settings.qdrant_max_retries,
+            "dependency_probe_timeout_seconds": settings.dependency_probe_timeout_seconds,
         },
         "targets": {
             "azure_openai_endpoint_host": azure_host,

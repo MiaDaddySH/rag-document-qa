@@ -8,9 +8,10 @@ from app.chunker import chunk_text
 from app.config import get_settings_health_report, settings
 from app.document_loader import extract_text_from_pdf
 from app.embedding import embed_texts
+from app.llm_client import probe_azure_openai_dependency
 from pydantic import BaseModel
 from app.rag_pipeline import answer_question
-from app.vector_store import delete_chunks_by_filename, upsert_chunks
+from app.vector_store import delete_chunks_by_filename, probe_qdrant_dependency, upsert_chunks
 
 # 主应用实例
 app = FastAPI(
@@ -73,12 +74,28 @@ def read_root():
 
 # 健康检查端点，返回服务状态和 Azure OpenAI 配置状态。
 @app.get("/health")
-def health_check():
+def health_check(check_dependencies: bool = Query(False)):
     config_report = get_settings_health_report()
+    dependency_report = {
+        "checked": check_dependencies,
+        "ready": True,
+        "azure_openai": {"ready": None, "detail": "skipped"},
+        "qdrant": {"ready": None, "detail": "skipped"},
+    }
+    if check_dependencies:
+        azure_ready, azure_detail = probe_azure_openai_dependency()
+        qdrant_ready, qdrant_detail = probe_qdrant_dependency()
+        dependency_report = {
+            "checked": True,
+            "ready": azure_ready and qdrant_ready,
+            "azure_openai": {"ready": azure_ready, "detail": azure_detail},
+            "qdrant": {"ready": qdrant_ready, "detail": qdrant_detail},
+        }
     return {
         "status": "ok",
-        "service_ready": config_report["config_validated"],
+        "service_ready": config_report["config_validated"] and dependency_report["ready"],
         "config": config_report,
+        "dependencies": dependency_report,
     }
 
 # 文件上传端点，接受 PDF 文件并保存到服务器。
