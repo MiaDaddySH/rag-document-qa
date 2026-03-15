@@ -1,3 +1,5 @@
+import re
+
 from app.config import settings
 from app.embedding import embed_text
 from app.llm_client import get_llm_client, run_openai_with_retry
@@ -44,6 +46,67 @@ def filter_retrieved_chunks(retrieved_chunks: list[dict]) -> list[dict]:
 
     return filtered
 
+
+def normalize_vector_score(score: float | None) -> float:
+    if score is None:
+        return 0.0
+    if score < 0:
+        return max(0.0, (score + 1.0) / 2.0)
+    return min(score, 1.0)
+
+
+def tokenize_text(text: str) -> set[str]:
+    tokens = re.findall(r"[A-Za-z0-9]+|[\u4e00-\u9fff]", (text or "").lower())
+    return {token for token in tokens if token}
+
+
+def compute_keyword_overlap_score(question: str, text: str) -> float:
+    question_tokens = tokenize_text(question)
+    if not question_tokens:
+        return 0.0
+    text_tokens = tokenize_text(text)
+    if not text_tokens:
+        return 0.0
+    overlap_count = len(question_tokens.intersection(text_tokens))
+    return overlap_count / len(question_tokens)
+
+
+def rerank_chunks(question: str, retrieved_chunks: list[dict], final_top_k: int) -> list[dict]:
+    vector_weight = settings.rag_rerank_vector_weight
+    keyword_weight = settings.rag_rerank_keyword_weight
+    weight_sum = vector_weight + keyword_weight
+    if weight_sum <= 0:
+        vector_weight = 1.0
+        keyword_weight = 0.0
+    else:
+        vector_weight = vector_weight / weight_sum
+        keyword_weight = keyword_weight / weight_sum
+
+    scored_chunks = []
+    for chunk in retrieved_chunks:
+        text = chunk.get("text", "") or ""
+        vector_score = normalize_vector_score(chunk.get("score"))
+        keyword_score = compute_keyword_overlap_score(question, text)
+        rerank_score = (vector_score * vector_weight) + (keyword_score * keyword_weight)
+        scored_chunks.append(
+            {
+                **chunk,
+                "vector_score": vector_score,
+                "keyword_score": keyword_score,
+                "rerank_score": rerank_score,
+            }
+        )
+
+    reranked = sorted(
+        scored_chunks,
+        key=lambda item: (
+            item.get("rerank_score", 0.0),
+            item.get("score", 0.0) or 0.0,
+        ),
+        reverse=True,
+    )
+    return reranked[:final_top_k]
+
 # 构建最终的答案时，除了返回生成的文本，还会返回每个被检索到的 chunk 的来源信息，方便前端展示。
 def build_sources(retrieved_chunks: list[dict]) -> list[dict]:
     sources = []
@@ -54,6 +117,9 @@ def build_sources(retrieved_chunks: list[dict]) -> list[dict]:
                 "filename": chunk.get("filename"),
                 "chunk_index": chunk.get("chunk_index"),
                 "score": chunk.get("score"),
+                "rerank_score": chunk.get("rerank_score"),
+                "keyword_score": chunk.get("keyword_score"),
+                "vector_score": chunk.get("vector_score"),
                 "start_char": chunk.get("start_char"),
                 "end_char": chunk.get("end_char"),
             }
@@ -102,15 +168,21 @@ def answer_question(
 ) -> dict:
     if not question.strip():
         raise ValueError("Question must not be empty.")
+    final_top_k = max(1, top_k)
+    retrieval_limit = max(
+        final_top_k,
+        final_top_k * settings.rag_retrieval_multiplier,
+    )
 
     query_vector = embed_text(question)
     retrieved_chunks = search_similar_chunks(
         query_vector=query_vector,
-        limit=top_k,
+        limit=retrieval_limit,
         filename=filename,
     )
     filtered_chunks = filter_retrieved_chunks(retrieved_chunks)
-    context = build_context(filtered_chunks, settings.rag_context_max_chars)
+    reranked_chunks = rerank_chunks(question=question, retrieved_chunks=filtered_chunks, final_top_k=final_top_k)
+    context = build_context(reranked_chunks, settings.rag_context_max_chars)
     if not context.strip():
         return {
             "question": question,
@@ -120,12 +192,12 @@ def answer_question(
             "retrieved_chunks": [],
         }
     answer = generate_answer(question=question, context=context)
-    sources = build_sources(filtered_chunks)
+    sources = build_sources(reranked_chunks)
 
     return {
         "question": question,
         "filename": filename,
         "answer": answer,
         "sources": sources,
-        "retrieved_chunks": filtered_chunks,
+        "retrieved_chunks": reranked_chunks,
     }

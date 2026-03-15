@@ -13,7 +13,7 @@
     "question": "What risks or challenges are mentioned for enterprise RAG adoption?",
     "filename": "ai-for-enterprise-rag-eguide.pdf",
     "top_k": 4,
-    "expected_keywords": ["risk", "challenge", "quality", "governance"],
+    "expected_keywords": ["risk", "challenge", "security", "latency", "privacy"],
     "min_source_count": 1,
     "expected_source_filenames": ["ai-for-enterprise-rag-eguide.pdf"]
   },
