@@ -1,316 +1,226 @@
-# AI PDF RAG Assistant
+# RAG MVP (PDF QA Assistant)
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-API-green)
 ![Azure OpenAI](https://img.shields.io/badge/Azure-OpenAI-blue)
-![Vector DB](https://img.shields.io/badge/Qdrant-VectorDB-orange)
+![Qdrant](https://img.shields.io/badge/Qdrant-VectorDB-orange)
 
-An AI-powered document question answering system built with **FastAPI, Azure OpenAI, and Qdrant**.
+This project is a PDF question-answering system built with **FastAPI + Azure OpenAI + Qdrant**.  
+Typical flow: upload PDF → index document → ask questions → return grounded answers with sources and citations.
 
-Upload a PDF → Index the document → Ask questions → Get answers grounded in the document content.
+## Current Capabilities (V0.2 Level)
+- PDF upload, extraction, chunking, embedding, retrieval, and QA
+- Retrieval reranking (vector score + keyword overlap score)
+- Confidence-based refusal strategy (avoid low-evidence over-answering)
+- Sentence-level evidence citations (`citations`)
+- Query embedding cache (lower latency and cost for repeated questions)
+- Offline evaluation and parameter tuning (English + Chinese)
 
-This project demonstrates a complete **Retrieval-Augmented Generation (RAG)** pipeline for building AI knowledge assistants.
+## Project Structure
 
----
-
-# Project Overview
-
-Large Language Models cannot reliably answer questions about private documents unless the relevant information is provided in the prompt.
-
-This project implements a **Retrieval-Augmented Generation (RAG)** architecture that allows users to ask questions about PDF documents.
-
-Pipeline:
-
-```
-PDF Upload
-   ↓
-Text Extraction
-   ↓
-Chunking
-   ↓
-Embedding (Azure OpenAI)
-   ↓
-Vector Storage (Qdrant)
-   ↓
-Semantic Search
-   ↓
-LLM Answer Generation
-```
-
-The system retrieves the most relevant document chunks and feeds them into the LLM to generate grounded answers.
-
----
-
-# Architecture Diagram
-
-The system follows a Retrieval-Augmented Generation (RAG) architecture.
-
-```mermaid
-flowchart TD
-
-User[User Question] --> WebUI[Web Admin UI]
-
-WebUI --> FastAPI[FastAPI Backend]
-
-FastAPI --> Upload[PDF Upload API]
-FastAPI --> Index[Index Document API]
-FastAPI --> Ask[Ask Question API]
-
-Upload --> Storage[(Local File Storage)]
-
-Index --> Extract[PDF Text Extraction]
-Extract --> Chunk[Text Chunking]
-Chunk --> Embed[Generate Embeddings]
-
-Embed --> AzureOpenAI[(Azure OpenAI Embedding Model)]
-
-Embed --> Qdrant[(Qdrant Vector Database)]
-
-Ask --> QueryEmbed[Question Embedding]
-QueryEmbed --> AzureOpenAI
-
-QueryEmbed --> VectorSearch[Vector Similarity Search]
-
-VectorSearch --> Qdrant
-
-VectorSearch --> Context[Retrieve Top-K Chunks]
-
-Context --> LLM[Answer Generation]
-
-LLM --> AzureOpenAI
-
-LLM --> Response[Return Answer + Sources]
-
-Response --> WebUI
-```
-
-This architecture enables the system to answer questions based on uploaded documents while keeping the responses grounded in the retrieved document context.
-
----
-# Demo Screenshot
-
-Example of the RAG system answering questions about a PDF document.
-
-![Demo Screenshot](docs/demo.png)
-
----
-
-# Features
-
-* Upload PDF documents
-* Automatically extract and chunk text
-* Generate embeddings using Azure OpenAI
-* Store vectors in Qdrant
-* Perform semantic search on document content
-* Answer questions based on retrieved document context
-* Display answer sources for transparency
-* Lightweight web admin interface for testing
-
----
-# Tech Stack
-
-Backend
-
-* FastAPI
-* Python
-* Azure OpenAI
-* Qdrant
-* PyMuPDF
-* Pydantic
-
-Frontend
-
-* HTML
-* CSS
-* JavaScript
-
-Infrastructure
-
-* Docker (for Qdrant)
-
----
-
-# Project Structure
-
-```
+```text
 backend/
-│
-├── app/
-│   ├── main.py
-│   ├── config.py
-│   ├── llm_client.py
-│   ├── document_loader.py
-│   ├── chunker.py
-│   ├── embedding.py
-│   ├── vector_store.py
-│   └── rag_pipeline.py
-│
-├── requirements.txt
-└── .env.example
+  app/
+    main.py              # FastAPI entry and APIs
+    config.py            # config and validation
+    document_loader.py   # PDF text extraction
+    chunker.py           # text chunking
+    embedding.py         # embedding calls + cache
+    vector_store.py      # Qdrant read/write
+    rag_pipeline.py      # retrieve, rerank, refusal, evidence alignment
+    evaluation.py        # offline evaluation
+    tune_rag.py          # grid search tuning
+    eval_cases.sample.json
+    eval_cases.zh.json
+  requirements.txt
 
 web-admin/
-│
-├── index.html
-├── style.css
-└── app.js
+  index.html
+  style.css
+  app.js
 ```
 
----
+## Quick Start
 
-# How to Run the Project
+### 1) Start Qdrant
 
-## 1 Start Qdrant
-
-```
-docker run -p 6333:6333 qdrant/qdrant
+```bash
+docker run -d --name rag-qdrant -p 6333:6333 qdrant/qdrant
 ```
 
----
+### 2) Start Backend
 
-## 2 Setup Backend
-
-```
+```bash
 cd backend
-
 python -m venv .venv
 source .venv/bin/activate
-
 pip install -r requirements.txt
 ```
 
-Create a `.env` file:
+Create `backend/.env` (minimal example):
 
-```
+```bash
 AZURE_OPENAI_API_KEY=your_key
 AZURE_OPENAI_ENDPOINT=https://your-endpoint.openai.azure.com
-AZURE_OPENAI_DEPLOYMENT=your_chat_model
-AZURE_OPENAI_EMBEDDING_DEPLOYMENT=your_embedding_model
+AZURE_OPENAI_DEPLOYMENT=your_chat_deployment
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=your_embedding_deployment
 
 QDRANT_URL=http://localhost:6333
 QDRANT_COLLECTION_NAME=rag_documents
 ```
 
-Run the backend:
+Run API:
 
-```
+```bash
 uvicorn app.main:app --reload
 ```
 
----
+### 3) Start Web Admin
 
-## 3 Run Web Admin
-
-```
+```bash
 cd web-admin
 python3 -m http.server 5500
 ```
 
-Open:
+Open: `http://127.0.0.1:5500`
 
+## Common APIs
+
+### Health Check
+
+```http
+GET /health
+GET /health?check_dependencies=true
 ```
-http://127.0.0.1:5500
-```
-
----
-
-# API Endpoints
 
 ### Upload PDF
 
-```
+```http
 POST /upload
 ```
 
----
-
 ### Index Document
 
-```
+```http
 POST /index/{filename}
 ```
 
-This step:
-
-* extracts text
-* chunks the document
-* generates embeddings
-* stores vectors in Qdrant
-
----
-
 ### Ask Question
 
-```
+```http
 POST /ask
+Content-Type: application/json
 ```
 
-Example request:
+Request example:
 
-```
+```json
 {
-  "question": "What is this document about?",
-  "top_k": 3,
-  "filename": "example.pdf"
+  "question": "What implementation recommendations does the guide provide?",
+  "top_k": 6,
+  "filename": "ai-for-enterprise-rag-eguide.pdf"
 }
 ```
 
----
+Important response fields:
+- `answer`
+- `sources`
+- `citations`
+- `is_refused`
+- `refusal_reason`
+- `answer_confidence`
 
-# Web Admin Demo
+## Offline Evaluation
 
-The web admin interface allows you to:
+English evaluation:
 
-1. Upload a PDF
-2. Index the document
-3. Ask questions about it
-
-The interface displays:
-
-* Generated answer
-* Source chunks
-* Retrieved document segments
-
----
-
-# Design Decisions
-
-### Chunking Strategy
-
-Documents are split into overlapping chunks to preserve semantic continuity.
-
-```
-chunk_size = 500
-chunk_overlap = 100
+```bash
+cd backend
+python -m app.evaluation --cases-file app/eval_cases.sample.json --min-pass-rate 0.6 --min-avg-keyword-hit 0.3
 ```
 
----
+Chinese evaluation:
 
-### Vector Similarity
+```bash
+cd backend
+python -m app.evaluation --cases-file app/eval_cases.zh.json --min-pass-rate 0.6 --min-avg-keyword-hit 0.3
+```
 
-The system uses **cosine similarity** for semantic search.
+## Parameter Tuning (Grid Search)
 
----
+```bash
+cd backend
+python -m app.tune_rag --cases-file app/eval_cases.sample.json --top-n 5
+python -m app.tune_rag --cases-file app/eval_cases.zh.json --top-n 5
+```
 
-### Document Filtering
+## Key Configuration
 
-When multiple documents exist in the vector database, retrieval can be filtered by `filename` to avoid cross-document contamination.
+RAG quality:
+- `RAG_MIN_SCORE`
+- `RAG_RETRIEVAL_MULTIPLIER`
+- `RAG_RERANK_VECTOR_WEIGHT`
+- `RAG_RERANK_KEYWORD_WEIGHT`
+- `RAG_CONFIDENCE_THRESHOLD`
+- `RAG_MIN_TOP_RERANK_SCORE`
+- `RAG_MAX_CITATIONS`
+- `RAG_CITATION_MIN_OVERLAP`
 
----
+Performance:
+- `RAG_QUERY_EMBEDDING_CACHE_ENABLED`
+- `RAG_QUERY_EMBEDDING_CACHE_SIZE`
 
-# Future Improvements
+## Architecture
 
-Potential improvements:
+```mermaid
+flowchart TD
 
-* Multi-document knowledge base
-* Streaming responses
-* Hybrid search (vector + keyword)
-* UI for document management
-* Authentication
-* Deployment with Docker Compose
-* CI/CD pipeline
+User[User] --> WebUI[Web Admin UI]
+WebUI --> FastAPI[FastAPI Backend]
 
----
+FastAPI --> Upload[POST /upload]
+FastAPI --> Index[POST /index/{filename}]
+FastAPI --> Ask[POST /ask]
 
-# License
+Upload --> LocalStorage[(Local PDF Storage)]
 
-MIT License
+Index --> Extract[PDF Text Extraction]
+Extract --> Chunk[Chunking]
+Chunk --> Embed[Embedding Generation]
+Embed --> AzureOpenAI[(Azure OpenAI Embedding)]
+Embed --> Qdrant[(Qdrant Vector DB)]
+
+Ask --> QueryEmbed[Question Embedding]
+QueryEmbed --> AzureOpenAI
+QueryEmbed --> Retrieve[Vector Retrieval]
+Retrieve --> Qdrant
+Retrieve --> Rerank[Rerank: vector + keyword]
+Rerank --> Confidence[Confidence & Refusal Gate]
+Confidence --> LLM[Answer Generation]
+LLM --> AzureOpenAI
+LLM --> Citations[Evidence Citation Alignment]
+Citations --> Response[Answer + Sources + Citations + Refusal Signals]
+Response --> WebUI
+```
+
+Simplified flow:
+
+```text
+PDF -> Text -> Chunk -> Embedding -> Qdrant
+Question -> Query Embedding -> Retrieve -> Rerank -> Confidence Gate -> LLM -> Citations -> Response
+```
+
+## Known Limits
+- Current default usage is single-document QA (via `filename` filter).
+- Citation alignment uses lightweight token overlap and may be suboptimal on complex tables or cross-paragraph reasoning.
+- For production, add auth, rate limiting, audit trails, and monitoring/alerting.
+
+## Suggested Next Steps
+- Query rewrite for multi-turn QA
+- Hybrid retrieval (vector + keyword)
+- Structure-aware chunking (titles/paragraphs/lists)
+- Metrics dashboarding (latency, refusal rate, citation coverage)
+
+## License
+
+MIT
