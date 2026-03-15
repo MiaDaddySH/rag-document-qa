@@ -1,0 +1,29 @@
+[
+  {
+    "id": "enterprise_rag_case_1",
+    "question": "What is the main goal of enterprise RAG in this guide?",
+    "filename": "ai-for-enterprise-rag-eguide.pdf",
+    "top_k": 3,
+    "expected_keywords": ["enterprise", "RAG", "knowledge"],
+    "min_source_count": 1,
+    "expected_source_filenames": ["ai-for-enterprise-rag-eguide.pdf"]
+  },
+  {
+    "id": "enterprise_rag_case_2",
+    "question": "What risks or challenges are mentioned for enterprise RAG adoption?",
+    "filename": "ai-for-enterprise-rag-eguide.pdf",
+    "top_k": 4,
+    "expected_keywords": ["risk", "challenge", "quality", "governance"],
+    "min_source_count": 1,
+    "expected_source_filenames": ["ai-for-enterprise-rag-eguide.pdf"]
+  },
+  {
+    "id": "enterprise_rag_case_3",
+    "question": "What implementation recommendations does the guide provide?",
+    "filename": "ai-for-enterprise-rag-eguide.pdf",
+    "top_k": 6,
+    "expected_keywords": ["implementation", "infrastructure", "security", "open ecosystem"],
+    "min_source_count": 1,
+    "expected_source_filenames": ["ai-for-enterprise-rag-eguide.pdf"]
+  }
+]

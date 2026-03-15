@@ -1,0 +1,29 @@
+[
+  {
+    "id": "enterprise_rag_zh_case_1",
+    "question": "这份指南中，企业级 RAG 的核心目标是什么？",
+    "filename": "ai-for-enterprise-rag-eguide.pdf",
+    "top_k": 3,
+    "expected_keywords": ["企业", "RAG", "知识"],
+    "min_source_count": 1,
+    "expected_source_filenames": ["ai-for-enterprise-rag-eguide.pdf"]
+  },
+  {
+    "id": "enterprise_rag_zh_case_2",
+    "question": "文档提到了企业落地 RAG 时的哪些风险或挑战？",
+    "filename": "ai-for-enterprise-rag-eguide.pdf",
+    "top_k": 4,
+    "expected_keywords": ["风险", "挑战", "质量", "治理"],
+    "min_source_count": 1,
+    "expected_source_filenames": ["ai-for-enterprise-rag-eguide.pdf"]
+  },
+  {
+    "id": "enterprise_rag_zh_case_3",
+    "question": "这份指南给出了哪些实施建议或实践路径？",
+    "filename": "ai-for-enterprise-rag-eguide.pdf",
+    "top_k": 4,
+    "expected_keywords": ["实施", "架构", "检索", "评测"],
+    "min_source_count": 1,
+    "expected_source_filenames": ["ai-for-enterprise-rag-eguide.pdf"]
+  }
+]

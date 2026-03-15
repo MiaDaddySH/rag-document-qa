@@ -67,17 +67,21 @@ def run_qdrant_with_retry(operation: Callable[[], T], operation_name: str) -> T:
 
     raise RuntimeError(f"{operation_name} failed: {last_error}")
 
+
+def collection_exists(client: QdrantClient, collection_name: str) -> bool:
+    collections = run_qdrant_with_retry(
+        operation=lambda: client.get_collections().collections,
+        operation_name="get_collections",
+    )
+    return any(collection.name == collection_name for collection in collections)
+
 # 确保 collection 存在。
 # 如果不存在，就按给定的向量维度创建。
 def ensure_collection(vector_size: int) -> None:
     client = get_qdrant_client()
     collection_name = settings.qdrant_collection_name
 
-    collections = run_qdrant_with_retry(
-        operation=lambda: client.get_collections().collections,
-        operation_name="get_collections",
-    )
-    exists = any(collection.name == collection_name for collection in collections)
+    exists = collection_exists(client=client, collection_name=collection_name)
 
     if not exists:
         run_qdrant_with_retry(
@@ -94,10 +98,13 @@ def ensure_collection(vector_size: int) -> None:
 # 删除 Qdrant 中所有 filename 为指定值的 chunks。
 def delete_chunks_by_filename(filename: str) -> None:
     client = get_qdrant_client()
+    collection_name = settings.qdrant_collection_name
+    if not collection_exists(client=client, collection_name=collection_name):
+        return
 
     run_qdrant_with_retry(
         operation=lambda: client.delete(
-            collection_name=settings.qdrant_collection_name,
+            collection_name=collection_name,
             points_selector=Filter(
                 must=[
                     FieldCondition(
