@@ -178,9 +178,9 @@ flowchart TD
 User[User] --> WebUI[Web Admin UI]
 WebUI --> FastAPI[FastAPI Backend]
 
-FastAPI --> Upload[POST /upload]
-FastAPI --> Index[POST /index/{filename}]
-FastAPI --> Ask[POST /ask]
+FastAPI --> Upload["POST /upload"]
+FastAPI --> Index["POST /index/:filename"]
+FastAPI --> Ask["POST /ask"]
 
 Upload --> LocalStorage[(Local PDF Storage)]
 
