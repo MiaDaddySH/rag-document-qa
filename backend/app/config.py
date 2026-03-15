@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     rag_rerank_keyword_weight: float = Field(default=0.3, alias="RAG_RERANK_KEYWORD_WEIGHT", ge=0.0, le=1.0)
     rag_confidence_threshold: float = Field(default=0.3, alias="RAG_CONFIDENCE_THRESHOLD", ge=0.0, le=1.0)
     rag_min_top_rerank_score: float = Field(default=0.2, alias="RAG_MIN_TOP_RERANK_SCORE", ge=0.0, le=1.0)
+    rag_query_embedding_cache_enabled: bool = Field(default=True, alias="RAG_QUERY_EMBEDDING_CACHE_ENABLED")
+    rag_query_embedding_cache_size: int = Field(default=256, alias="RAG_QUERY_EMBEDDING_CACHE_SIZE", ge=1, le=10000)
     embedding_batch_size: int = Field(default=32, alias="EMBEDDING_BATCH_SIZE", ge=1, le=2048)
     upload_max_mb: int = Field(default=20, alias="UPLOAD_MAX_MB", ge=1, le=1024)
     llm_timeout_seconds: float = Field(default=30.0, alias="LLM_TIMEOUT_SECONDS", ge=0.1, le=300.0)
@@ -149,6 +151,8 @@ def get_settings_health_report() -> dict:
             "rag_rerank_keyword_weight": settings.rag_rerank_keyword_weight,
             "rag_confidence_threshold": settings.rag_confidence_threshold,
             "rag_min_top_rerank_score": settings.rag_min_top_rerank_score,
+            "rag_query_embedding_cache_enabled": settings.rag_query_embedding_cache_enabled,
+            "rag_query_embedding_cache_size": settings.rag_query_embedding_cache_size,
             "embedding_batch_size": settings.embedding_batch_size,
             "upload_max_mb": settings.upload_max_mb,
             "llm_timeout_seconds": settings.llm_timeout_seconds,
