@@ -57,7 +57,16 @@ def normalize_vector_score(score: float | None) -> float:
 
 def tokenize_text(text: str) -> set[str]:
     tokens = re.findall(r"[A-Za-z0-9]+|[\u4e00-\u9fff]", (text or "").lower())
-    return {token for token in tokens if token}
+    normalized = set()
+    for token in tokens:
+        if not token:
+            continue
+        if token.isdigit():
+            continue
+        if len(token) == 1 and token.isascii() and token.isalpha():
+            continue
+        normalized.add(token)
+    return normalized
 
 
 def compute_keyword_overlap_score(question: str, text: str) -> float:
@@ -132,7 +141,95 @@ def is_model_uncertain(answer: str) -> bool:
     ]
     return any(marker in lowered for marker in markers)
 
-# 构建最终的答案时，除了返回生成的文本，还会返回每个被检索到的 chunk 的来源信息，方便前端展示。
+
+def split_answer_sentences(answer: str) -> list[str]:
+    normalized = (answer or "").replace("\n", " ").strip()
+    if not normalized:
+        return []
+    raw_parts = re.split(r"(?<=[。！？.!?])\s+", normalized)
+    sentences = []
+    for part in raw_parts:
+        sentence = part.strip()
+        if not sentence:
+            continue
+        sentence_tokens = tokenize_text(sentence)
+        if len(sentence_tokens) < 2:
+            continue
+        sentences.append(sentence)
+    return sentences
+
+
+def extract_evidence_excerpt(text: str, claim_tokens: set[str], max_chars: int = 220) -> str:
+    source_text = text or ""
+    if not source_text:
+        return ""
+    lowered = source_text.lower()
+    matched_token = next((token for token in claim_tokens if token in lowered and len(token) > 1), None)
+    if not matched_token:
+        return source_text[:max_chars]
+    start_index = max(0, lowered.find(matched_token) - 60)
+    end_index = min(len(source_text), start_index + max_chars)
+    return source_text[start_index:end_index]
+
+
+def build_evidence_citations(answer: str, retrieved_chunks: list[dict]) -> list[dict]:
+    citations = []
+    if not answer or not retrieved_chunks:
+        return citations
+    sentences = split_answer_sentences(answer)
+    if not sentences:
+        return citations
+    max_citations = max(1, settings.rag_max_citations)
+    min_overlap = settings.rag_citation_min_overlap
+    for sentence in sentences:
+        claim_tokens = tokenize_text(sentence)
+        if not claim_tokens:
+            continue
+        best_match = None
+        best_overlap = 0.0
+        for chunk in retrieved_chunks:
+            chunk_tokens = tokenize_text(chunk.get("text", "") or "")
+            if not chunk_tokens:
+                continue
+            overlap = len(claim_tokens.intersection(chunk_tokens)) / len(claim_tokens)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_match = chunk
+        if not best_match or best_overlap < min_overlap:
+            continue
+        citations.append(
+            {
+                "claim": sentence,
+                "filename": best_match.get("filename"),
+                "chunk_index": best_match.get("chunk_index"),
+                "overlap_score": round(best_overlap, 4),
+                "evidence_excerpt": extract_evidence_excerpt(
+                    text=best_match.get("text", "") or "",
+                    claim_tokens=claim_tokens,
+                ),
+            }
+        )
+        if len(citations) >= max_citations:
+            break
+    if citations:
+        return citations
+    fallback_claim = sentences[0][:200] if sentences else (answer or "")[:200]
+    for chunk in retrieved_chunks[:max_citations]:
+        citations.append(
+            {
+                "claim": fallback_claim,
+                "filename": chunk.get("filename"),
+                "chunk_index": chunk.get("chunk_index"),
+                "overlap_score": round(float(chunk.get("rerank_score") or 0.0), 4),
+                "evidence_excerpt": extract_evidence_excerpt(
+                    text=chunk.get("text", "") or "",
+                    claim_tokens=tokenize_text(fallback_claim),
+                ),
+            }
+        )
+    return citations
+
+
 def build_sources(retrieved_chunks: list[dict]) -> list[dict]:
     sources = []
 
@@ -217,6 +314,7 @@ def answer_question(
             "answer": "没有找到相关内容，我不知道。",
             "sources": build_sources(reranked_chunks),
             "retrieved_chunks": reranked_chunks,
+            "citations": [],
             "is_refused": True,
             "refusal_reason": "no_relevant_context",
             "answer_confidence": 0.0,
@@ -233,12 +331,16 @@ def answer_question(
             "answer": "当前检索证据不足，我不确定。请提供更具体的问题或更多资料。",
             "sources": build_sources(reranked_chunks),
             "retrieved_chunks": reranked_chunks,
+            "citations": [],
             "is_refused": True,
             "refusal_reason": refusal_reason,
             "answer_confidence": answer_confidence,
         }
     answer = generate_answer(question=question, context=context)
     sources = build_sources(reranked_chunks)
+    if is_model_uncertain(answer) and answer_confidence >= settings.rag_confidence_threshold:
+        answer = generate_answer(question=question, context=context)
+    citations = build_evidence_citations(answer=answer, retrieved_chunks=reranked_chunks)
     if is_model_uncertain(answer):
         return {
             "question": question,
@@ -246,6 +348,7 @@ def answer_question(
             "answer": answer,
             "sources": sources,
             "retrieved_chunks": reranked_chunks,
+            "citations": citations,
             "is_refused": True,
             "refusal_reason": "model_uncertain",
             "answer_confidence": answer_confidence,
@@ -257,6 +360,7 @@ def answer_question(
         "answer": answer,
         "sources": sources,
         "retrieved_chunks": reranked_chunks,
+        "citations": citations,
         "is_refused": False,
         "refusal_reason": None,
         "answer_confidence": answer_confidence,
