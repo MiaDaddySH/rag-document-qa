@@ -25,5 +25,15 @@
     "expected_keywords": ["implementation", "infrastructure", "security", "open ecosystem"],
     "min_source_count": 1,
     "expected_source_filenames": ["ai-for-enterprise-rag-eguide.pdf"]
+  },
+  {
+    "id": "enterprise_rag_case_4_unanswerable",
+    "question": "What is the exact 2026 quarterly revenue number in this guide?",
+    "filename": "ai-for-enterprise-rag-eguide.pdf",
+    "top_k": 4,
+    "expected_answerable": false,
+    "expected_keywords": [],
+    "min_source_count": 0,
+    "expected_source_filenames": ["ai-for-enterprise-rag-eguide.pdf"]
   }
 ]

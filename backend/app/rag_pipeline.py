@@ -107,6 +107,31 @@ def rerank_chunks(question: str, retrieved_chunks: list[dict], final_top_k: int)
     )
     return reranked[:final_top_k]
 
+
+def compute_answer_confidence(retrieved_chunks: list[dict], context: str) -> float:
+    if not retrieved_chunks:
+        return 0.0
+    top_score = float(retrieved_chunks[0].get("rerank_score") or 0.0)
+    top_scores = [float(chunk.get("rerank_score") or 0.0) for chunk in retrieved_chunks[:3]]
+    avg_top_score = sum(top_scores) / max(1, len(top_scores))
+    context_target_chars = max(1, min(settings.rag_context_max_chars, 2000))
+    context_coverage = min(1.0, len(context) / context_target_chars)
+    confidence = (0.55 * top_score) + (0.35 * avg_top_score) + (0.10 * context_coverage)
+    return max(0.0, min(1.0, confidence))
+
+
+def is_model_uncertain(answer: str) -> bool:
+    lowered = (answer or "").lower()
+    markers = [
+        "i don't know",
+        "do not know",
+        "unknown",
+        "不确定",
+        "我不知道",
+        "没有找到相关内容",
+    ]
+    return any(marker in lowered for marker in markers)
+
 # 构建最终的答案时，除了返回生成的文本，还会返回每个被检索到的 chunk 的来源信息，方便前端展示。
 def build_sources(retrieved_chunks: list[dict]) -> list[dict]:
     sources = []
@@ -183,16 +208,48 @@ def answer_question(
     filtered_chunks = filter_retrieved_chunks(retrieved_chunks)
     reranked_chunks = rerank_chunks(question=question, retrieved_chunks=filtered_chunks, final_top_k=final_top_k)
     context = build_context(reranked_chunks, settings.rag_context_max_chars)
+    answer_confidence = compute_answer_confidence(reranked_chunks, context)
+    top_rerank_score = float(reranked_chunks[0].get("rerank_score") or 0.0) if reranked_chunks else 0.0
     if not context.strip():
         return {
             "question": question,
             "filename": filename,
             "answer": "没有找到相关内容，我不知道。",
-            "sources": [],
-            "retrieved_chunks": [],
+            "sources": build_sources(reranked_chunks),
+            "retrieved_chunks": reranked_chunks,
+            "is_refused": True,
+            "refusal_reason": "no_relevant_context",
+            "answer_confidence": 0.0,
+        }
+    refusal_reason = None
+    if top_rerank_score < settings.rag_min_top_rerank_score:
+        refusal_reason = "weak_retrieval_signal"
+    elif answer_confidence < settings.rag_confidence_threshold:
+        refusal_reason = "low_answer_confidence"
+    if refusal_reason:
+        return {
+            "question": question,
+            "filename": filename,
+            "answer": "当前检索证据不足，我不确定。请提供更具体的问题或更多资料。",
+            "sources": build_sources(reranked_chunks),
+            "retrieved_chunks": reranked_chunks,
+            "is_refused": True,
+            "refusal_reason": refusal_reason,
+            "answer_confidence": answer_confidence,
         }
     answer = generate_answer(question=question, context=context)
     sources = build_sources(reranked_chunks)
+    if is_model_uncertain(answer):
+        return {
+            "question": question,
+            "filename": filename,
+            "answer": answer,
+            "sources": sources,
+            "retrieved_chunks": reranked_chunks,
+            "is_refused": True,
+            "refusal_reason": "model_uncertain",
+            "answer_confidence": answer_confidence,
+        }
 
     return {
         "question": question,
@@ -200,4 +257,7 @@ def answer_question(
         "answer": answer,
         "sources": sources,
         "retrieved_chunks": reranked_chunks,
+        "is_refused": False,
+        "refusal_reason": None,
+        "answer_confidence": answer_confidence,
     }

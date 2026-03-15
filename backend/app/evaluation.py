@@ -14,6 +14,7 @@ class EvalCase:
     expected_keywords: list[str]
     min_source_count: int
     expected_source_filenames: list[str]
+    expected_answerable: bool
 
 
 def load_cases(cases_file: Path) -> list[EvalCase]:
@@ -35,8 +36,10 @@ def load_cases(cases_file: Path) -> list[EvalCase]:
             filename = str(filename).strip() or None
 
         top_k = int(item.get("top_k", 3))
+        expected_answerable = bool(item.get("expected_answerable", True))
         expected_keywords = [str(keyword).strip() for keyword in item.get("expected_keywords", []) if str(keyword).strip()]
-        min_source_count = int(item.get("min_source_count", 1))
+        default_min_source_count = 1 if expected_answerable else 0
+        min_source_count = int(item.get("min_source_count", default_min_source_count))
         expected_source_filenames = [
             str(name).strip() for name in item.get("expected_source_filenames", []) if str(name).strip()
         ]
@@ -50,6 +53,7 @@ def load_cases(cases_file: Path) -> list[EvalCase]:
                 expected_keywords=expected_keywords,
                 min_source_count=min_source_count,
                 expected_source_filenames=expected_source_filenames,
+                expected_answerable=expected_answerable,
             )
         )
     return cases
@@ -81,24 +85,33 @@ def evaluate_case(case: EvalCase, dry_run: bool) -> dict[str, Any]:
     )
     answer_text = str(result.get("answer") or "")
     sources = result.get("sources") or []
+    is_refused = bool(result.get("is_refused"))
+    answer_confidence = result.get("answer_confidence")
+    refusal_reason = result.get("refusal_reason")
 
     has_answer = bool(answer_text.strip())
     source_count_ok = len(sources) >= case.min_source_count
-    keyword_ratio = keyword_hit_ratio(answer_text, case.expected_keywords)
+    keyword_ratio = keyword_hit_ratio(answer_text, case.expected_keywords) if case.expected_answerable else None
     keyword_ok = True if keyword_ratio is None else keyword_ratio > 0
+    answerability_ok = (not is_refused) if case.expected_answerable else is_refused
 
     source_filename_ok = True
     if case.expected_source_filenames:
         actual_filenames = {str(source.get("filename") or "") for source in sources}
         source_filename_ok = any(expected in actual_filenames for expected in case.expected_source_filenames)
 
-    passed = has_answer and source_count_ok and keyword_ok and source_filename_ok
+    passed = has_answer and source_count_ok and keyword_ok and source_filename_ok and answerability_ok
     return {
         "id": case.case_id,
         "executed": True,
         "passed": passed,
         "question": case.question,
         "filename": case.filename,
+        "expected_answerable": case.expected_answerable,
+        "is_refused": is_refused,
+        "refusal_reason": refusal_reason,
+        "answer_confidence": answer_confidence,
+        "answerability_ok": answerability_ok,
         "has_answer": has_answer,
         "source_count": len(sources),
         "min_source_count": case.min_source_count,
@@ -118,6 +131,13 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     pass_rate = 1.0
     if executed_results:
         pass_rate = len(passed_results) / len(executed_results)
+    refused_results = [item for item in executed_results if item.get("is_refused")]
+    expected_unanswerable = [item for item in executed_results if not item.get("expected_answerable", True)]
+    correct_refusals = [item for item in expected_unanswerable if item.get("is_refused")]
+    false_refusals = [item for item in executed_results if item.get("expected_answerable", True) and item.get("is_refused")]
+    refusal_precision = None
+    if refused_results:
+        refusal_precision = len(correct_refusals) / len(refused_results)
 
     return {
         "total_cases": len(results),
@@ -125,6 +145,11 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
         "passed_cases": len(passed_results),
         "pass_rate": pass_rate,
         "avg_keyword_hit_ratio": avg_keyword_ratio,
+        "refused_cases": len(refused_results),
+        "expected_unanswerable_cases": len(expected_unanswerable),
+        "correct_refusal_cases": len(correct_refusals),
+        "false_refusal_cases": len(false_refusals),
+        "refusal_precision": refusal_precision,
     }
 
 

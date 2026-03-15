@@ -25,5 +25,15 @@
     "expected_keywords": ["实施", "架构", "检索", "评测"],
     "min_source_count": 1,
     "expected_source_filenames": ["ai-for-enterprise-rag-eguide.pdf"]
+  },
+  {
+    "id": "enterprise_rag_zh_case_4_unanswerable",
+    "question": "这份文档中 2026 年每个季度的精确营收数字是多少？",
+    "filename": "ai-for-enterprise-rag-eguide.pdf",
+    "top_k": 4,
+    "expected_answerable": false,
+    "expected_keywords": [],
+    "min_source_count": 0,
+    "expected_source_filenames": ["ai-for-enterprise-rag-eguide.pdf"]
   }
 ]
